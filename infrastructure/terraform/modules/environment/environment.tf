@@ -18,7 +18,7 @@ resource "aws_cloudwatch_event_rule" "data_retrieval_timer" {
 resource "aws_cloudwatch_event_target" "data_retrieval_timer_target" { 
     # make this depend on the DB being up, so that we don't start grabbing files before the database even exists
     # there's still a required step of running the sql schema script, but this will at least limit errors
-    depends_on = ["aws_rds_cluster_instance.waze_database_instances"] 
+    depends_on = ["aws_db_instance.waze_database_default"] 
     rule = "${aws_cloudwatch_event_rule.data_retrieval_timer.name}"
     arn  = "${aws_lambda_function.waze_data_retrieval_function.arn}"
 }
@@ -410,10 +410,10 @@ resource "aws_lambda_function" "waze_data_processing_function"{
             ALERTPROCESSORARN = "${aws_lambda_function.waze_data_alerts_processing_function.arn}"
             JAMPROCESSORARN = "${aws_lambda_function.waze_data_jams_processing_function.arn}"
             IRREGULARITYPROCESSORARN = "${aws_lambda_function.waze_data_irregularities_processing_function.arn}"
-            PGHOST = "${aws_rds_cluster.waze_database_cluster.endpoint}"
+            PGHOST = "${aws_db_instance.waze_database_default.address}"
             PGUSER = "${var.lambda_db_username}"
             PGPASSWORD = "${var.lambda_db_password}"
-            PGDATABASE = "${aws_rds_cluster.waze_database_cluster.database_name}"
+            PGDATABASE = "${aws_db_instance.waze_database_default.name}"
             PGPORT = "${var.rds_port}"
             POOLSIZE = "${var.max_concurrent_db_connections_per_lambda}"
         }
@@ -435,10 +435,10 @@ resource "aws_lambda_function" "waze_data_alerts_processing_function"{
     memory_size = 512 #TODO: JRS 2018-02-06 - test large files to see if we need more (or could get by with less) resources
     environment {
         variables = {
-            PGHOST = "${aws_rds_cluster.waze_database_cluster.endpoint}"
+            PGHOST = "${aws_db_instance.waze_database_default.address}"
             PGUSER = "${var.lambda_db_username}"
             PGPASSWORD = "${var.lambda_db_password}"
-            PGDATABASE = "${aws_rds_cluster.waze_database_cluster.database_name}"
+            PGDATABASE = "${aws_db_instance.waze_database_default.name}"
             PGPORT = "${var.rds_port}"
             POOLSIZE = "${var.max_concurrent_db_connections_per_lambda}"
         }
@@ -460,10 +460,10 @@ resource "aws_lambda_function" "waze_data_jams_processing_function"{
     memory_size = 512 #TODO: JRS 2018-02-06 - test large files to see if we need more (or could get by with less) resources
     environment {
         variables = {
-            PGHOST = "${aws_rds_cluster.waze_database_cluster.endpoint}"
+            PGHOST = "${aws_db_instance.waze_database_default.address}"
             PGUSER = "${var.lambda_db_username}"
             PGPASSWORD = "${var.lambda_db_password}"
-            PGDATABASE = "${aws_rds_cluster.waze_database_cluster.database_name}"
+            PGDATABASE = "${aws_db_instance.waze_database_default.name}"
             PGPORT = "${var.rds_port}"
             POOLSIZE = "${var.max_concurrent_db_connections_per_lambda}"
         }
@@ -485,10 +485,10 @@ resource "aws_lambda_function" "waze_data_irregularities_processing_function"{
     memory_size = 512 #TODO: JRS 2018-02-06 - test large files to see if we need more (or could get by with less) resources
     environment {
         variables = {
-            PGHOST = "${aws_rds_cluster.waze_database_cluster.endpoint}"
+            PGHOST = "${aws_db_instance.waze_database_default.address}"
             PGUSER = "${var.lambda_db_username}"
             PGPASSWORD = "${var.lambda_db_password}"
-            PGDATABASE = "${aws_rds_cluster.waze_database_cluster.database_name}"
+            PGDATABASE = "${aws_db_instance.waze_database_default.name}"
             PGPORT = "${var.rds_port}"
             POOLSIZE = "${var.max_concurrent_db_connections_per_lambda}"
         }
@@ -603,36 +603,62 @@ resource "aws_db_subnet_group" "waze_db_subnet_group" {
   }
 }
 
-# create an aurora postegres cluster to add our rds instance to
-resource "aws_rds_cluster" "waze_database_cluster" {
-    cluster_identifier = "${var.object_name_prefix}-waze-data-aurora-cluster"
-    engine = "aurora-postgresql"
-    database_name = "waze_data"
-    master_username = "${var.rds_master_username}"
-    master_password = "${var.rds_master_password}"
-    backup_retention_period = 3 # short because all the data could be regenerated easily
-    preferred_backup_window = "02:00-04:00"
-    preferred_maintenance_window = "wed:05:00-wed:06:00"
-    port = "${var.rds_port}"
-    vpc_security_group_ids = ["${aws_security_group.allow_postgres_traffic.id}"]
-    storage_encrypted = false # not encrypted because it isn't really sensitive
-    db_subnet_group_name = "${aws_db_subnet_group.waze_db_subnet_group.id}"
-    final_snapshot_identifier = "${var.object_name_prefix}-db-final-snapshot"
-    skip_final_snapshot = "${var.skip_final_db_snapshot_on_destroy}"
-}
+# # create an aurora postegres cluster to add our rds instance to
+# resource "aws_rds_cluster" "waze_database_cluster" {
+#     cluster_identifier = "${var.object_name_prefix}-waze-data-aurora-cluster"
+#     engine = "aurora-postgresql"
+#     database_name = "waze_data"
+#     master_username = "${var.rds_master_username}"
+#     master_password = "${var.rds_master_password}"
+#     backup_retention_period = 3 # short because all the data could be regenerated easily
+#     preferred_backup_window = "02:00-04:00"
+#     preferred_maintenance_window = "wed:05:00-wed:06:00"
+#     port = "${var.rds_port}"
+#     vpc_security_group_ids = ["${aws_security_group.allow_postgres_traffic.id}"]
+#     storage_encrypted = false # not encrypted because it isn't really sensitive
+#     db_subnet_group_name = "${aws_db_subnet_group.waze_db_subnet_group.id}"
+#     final_snapshot_identifier = "${var.object_name_prefix}-db-final-snapshot"
+#     skip_final_snapshot = "${var.skip_final_db_snapshot_on_destroy}"
+# }
 
-# create the actual DB instance
-resource "aws_rds_cluster_instance" "waze_database_instances" {
-  count              = 1 # keeping this here, set to 1, in case someone wants to easily increase it (expensive, though)
-  identifier         = "${var.object_name_prefix}-waze-aurora-instance-${count.index}"
-  cluster_identifier = "${aws_rds_cluster.waze_database_cluster.id}"
-  instance_class     = "db.r4.large"
-  publicly_accessible = true
-  db_subnet_group_name = "${aws_db_subnet_group.waze_db_subnet_group.id}"
-  engine = "aurora-postgresql"
+# # create the actual DB instance
+# resource "aws_rds_cluster_instance" "waze_database_instances" {
+#   count              = 1 # keeping this here, set to 1, in case someone wants to easily increase it (expensive, though)
+#   identifier         = "${var.object_name_prefix}-waze-aurora-instance-${count.index}"
+#   cluster_identifier = "${aws_rds_cluster.waze_database_cluster.id}"
+#   instance_class     = "db.r4.large"
+#   publicly_accessible = true
+#   db_subnet_group_name = "${aws_db_subnet_group.waze_db_subnet_group.id}"
+#   engine = "aurora-postgresql"
 
-  tags {
-    Name = "${var.object_name_prefix}-waze-aurora-instance-${count.index}"
-    Environment = "${var.environment}"
-  }
-}
+#   tags {
+#     Name = "${var.object_name_prefix}-waze-aurora-instance-${count.index}"
+#     Environment = "${var.environment}"
+#   }
+# }
+
+
+# create the standard PostrgreSQL DB instance
+# resource "aws_db_instance" "waze_database_default" {
+#   allocated_storage       = 20
+#   storage_type            = "gp2"
+#   # count                 = 1 # keeping this here, set to 1, in case someone wants to easily increase it (expensive, though)
+#   identifier              = "${var.object_name_prefix}-waze-postgres-instance-${count.index}"
+#   # cluster_identifier    = "${aws_db_instance.waze_database_default.id}"
+#   instance_class          = "db.t2.micro"  
+#   # parameter_group_name  = "default.postgres.9.6"
+#   vpc_security_group_ids  = ["${aws_security_group.allow_postgres_traffic.id}"]
+#   db_subnet_group_name    = "${aws_db_subnet_group.waze_db_subnet_group.id}"
+#   engine                  = "postgres"
+#   engine_version          = "9.6.6"
+#   port                    = "${var.rds_port}"
+#   publicly_accessible     = true
+#   name                    = "waze_data"
+#   username                = "${var.rds_master_username}"
+#   password                = "${var.rds_master_password}"
+
+#   tags {
+#     Name = "${var.object_name_prefix}-waze-postgres-instance-${count.index}"
+#     Environment = "${var.environment}"
+#   }
+# }

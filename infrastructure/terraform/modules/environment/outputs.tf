@@ -1,5 +1,5 @@
 output "db_cluster_endpoint" {
-    value = "${aws_rds_cluster.waze_database_cluster.endpoint}"
+    value = "${aws_db_instance.waze_database_default.endpoint}"
     description = "The db endpoint to use when connecting to the database"
 }
 
